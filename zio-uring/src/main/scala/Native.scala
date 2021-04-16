@@ -1,6 +1,7 @@
 package zio.uring.native
 
 import ch.jodersky.jni.nativeLoader
+import java.nio.ByteBuffer
 
 @nativeLoader("ziouring0")
 class Native {
@@ -8,7 +9,11 @@ class Native {
 
   @native def destroyQueue(queue: Long): Unit
 
-  @native def readChunk(queue: Long, fd: Int, offset: Long, length: Long): Array[Byte]
+  @native def read(queue: Long, requestId: Long, fd: Int, offset: Long, length: Long): ByteBuffer
+
+  @native def write(queue: Long, requestId: Long, fd: Int, offset: Long, data: Array[Byte]): Unit
+
+  @native def await(queue: Long): Array[Long]
 
   @native def openFile(path: String): Int
 }

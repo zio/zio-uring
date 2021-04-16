@@ -25,11 +25,27 @@ JNIEXPORT void JNICALL Java_zio_uring_native_Native_destroyQueue
 
 /*
  * Class:      zio_uring_native_Native
- * Method:     readChunk
- * Signature:  (JIJJ)[B
+ * Method:     read
+ * Signature:  (JJIJJ)Ljava/nio/ByteBuffer;
  */
-JNIEXPORT jbyteArray JNICALL Java_zio_uring_native_Native_readChunk
-  (JNIEnv *, jobject, jlong, jint, jlong, jlong);
+JNIEXPORT jobject JNICALL Java_zio_uring_native_Native_read
+  (JNIEnv *, jobject, jlong, jlong, jint, jlong, jlong);
+
+/*
+ * Class:      zio_uring_native_Native
+ * Method:     write
+ * Signature:  (JJIJ[B)Ljava/nio/ByteBuffer;
+ */
+JNIEXPORT jobject JNICALL Java_zio_uring_native_Native_write
+  (JNIEnv *, jobject, jlong, jlong, jint, jlong, jbyteArray);
+
+/*
+ * Class:      zio_uring_native_Native
+ * Method:     await
+ * Signature:  (J)[J
+ */
+JNIEXPORT jlongArray JNICALL Java_zio_uring_native_Native_await
+  (JNIEnv *, jobject, jlong);
 
 /*
  * Class:      zio_uring_native_Native

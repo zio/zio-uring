@@ -1,4 +1,4 @@
-#include <zio_uring_native_Native.h>
+#include "include/zio_uring_native_Native.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -26,12 +26,13 @@ JNIEXPORT void JNICALL Java_zio_uring_native_Native_destroyQueue(JNIEnv *jni, jo
   free(ring);
 }
 
-JNIEXPORT jbyteArray JNICALL Java_zio_uring_native_Native_readChunk(JNIEnv *jni, jobject _ignore, jlong ringPtr, jint fd, jlong offset, jlong length) {
-  struct iovec ios[1];
-
+JNIEXPORT jobject JNICALL Java_zio_uring_native_Native_read(JNIEnv *jni, jobject _ignore, jlong ringPtr, jlong reqId, jint fd, jlong offset, jlong length) {
   void *buf;
   posix_memalign(&buf, length, length);
 
+  jobject destByteBuffer = (*jni)->NewDirectByteBuffer(jni, buf, length);
+
+  struct iovec ios[1];
   ios[0].iov_len = length;
   ios[0].iov_base = buf;
   
@@ -39,25 +40,35 @@ JNIEXPORT jbyteArray JNICALL Java_zio_uring_native_Native_readChunk(JNIEnv *jni,
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 
   io_uring_prep_readv(sqe, fd, ios, 1, offset);
+  sqe->user_data = reqId;
   io_uring_submit(ring);
 
-  struct io_uring_cqe *cqe;
-  io_uring_wait_cqe(ring, &cqe);
-
-  jsize retDataLen;
-  if (cqe->res < 0)
-    retDataLen = 0;
-  else
-    retDataLen = cqe->res;
-  
-  jbyteArray retData = (*jni)->NewByteArray(jni, retDataLen);
-  (*jni)->SetByteArrayRegion(jni, retData, 0, retDataLen, ios[0].iov_base);
-
-  io_uring_cqe_seen(ring, cqe);
-  free(ios[0].iov_base);
-
-  return retData;
+  return destByteBuffer;
 }
+
+JNIEXPORT jlongArray JNICALL Java_zio_uring_native_Native_await(JNIEnv *jni, jobject _ignore, jlong ringPtr) {
+  struct io_uring *ring = (struct io_uring *) ringPtr;
+  struct io_uring_cqe *cqes;
+
+  unsigned completions = io_uring_peek_batch_cqe(ring, &cqes, 16);
+  
+  jlongArray retArray = (*jni)->NewLongArray(jni, completions * 2);
+  long *arrayData = malloc(sizeof(long) * completions * 2);
+
+  for (unsigned i = 0; i < completions; i++) {
+    arrayData[i] = cqes[i].user_data;
+    arrayData[i + completions] = cqes[i].res;
+  }
+
+  fflush(stdout);
+
+  (*jni)->SetLongArrayRegion(jni, retArray, 0, completions * 2, arrayData);
+
+  free(arrayData);
+
+  return retArray;
+}
+
 
 JNIEXPORT jint JNICALL Java_zio_uring_native_Native_openFile(JNIEnv *jni, jobject _ignore, jstring path) {
   const char *filename = (*jni)->GetStringUTFChars(jni, path, NULL);
