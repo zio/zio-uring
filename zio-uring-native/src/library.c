@@ -26,11 +26,26 @@ JNIEXPORT void JNICALL Java_zio_uring_native_Native_destroyQueue(JNIEnv *jni, jo
   free(ring);
 }
 
+JNIEXPORT void JNICALL Java_zio_uring_native_Native_submit(JNIEnv *jni, jobject _ignore, jlong ringPtr) {
+  struct io_uring *ring = (struct io_uring*) ringPtr;
+
+  io_uring_submit(ring);
+}
+
 JNIEXPORT jobject JNICALL Java_zio_uring_native_Native_read(JNIEnv *jni, jobject _ignore, jlong ringPtr, jlong reqId, jint fd, jlong offset, jlong length) {
   void *buf;
-  posix_memalign(&buf, length, length);
+  int memret = posix_memalign(&buf, length, length);
+  if (memret < 0) {
+    perror("posix_memalign");
+    fflush(stderr);
+    return NULL;
+  }
 
   jobject destByteBuffer = (*jni)->NewDirectByteBuffer(jni, buf, length);
+  if (destByteBuffer == NULL) {
+    perror("NewDirectByteBuffer");
+    return NULL;
+  }
 
   struct iovec ios[1];
   ios[0].iov_len = length;
@@ -38,33 +53,60 @@ JNIEXPORT jobject JNICALL Java_zio_uring_native_Native_read(JNIEnv *jni, jobject
   
   struct io_uring *ring = (struct io_uring *) ringPtr;
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-
   io_uring_prep_readv(sqe, fd, ios, 1, offset);
   sqe->user_data = reqId;
-  io_uring_submit(ring);
 
   return destByteBuffer;
 }
 
-JNIEXPORT jlongArray JNICALL Java_zio_uring_native_Native_await(JNIEnv *jni, jobject _ignore, jlong ringPtr) {
+JNIEXPORT jlongArray JNICALL Java_zio_uring_native_Native_peek(JNIEnv *jni, jobject _ignore, jlong ringPtr, jint count) {
   struct io_uring *ring = (struct io_uring *) ringPtr;
-  struct io_uring_cqe *cqes;
+  struct io_uring_cqe **cqes = malloc(sizeof(struct io_uring_cqe *) * count);
 
-  unsigned completions = io_uring_peek_batch_cqe(ring, &cqes, 16);
+  unsigned completions = io_uring_peek_batch_cqe(ring, cqes, count);
   
-  jlongArray retArray = (*jni)->NewLongArray(jni, completions * 2);
-  long *arrayData = malloc(sizeof(long) * completions * 2);
+  unsigned retArrayLen = completions * 2;
+  jlongArray retArray = (*jni)->NewLongArray(jni, retArrayLen);
+
+  if (retArray == NULL)
+    return NULL;
+
+  jlong *arrayData = (*jni)->GetLongArrayElements(jni, retArray, NULL);
 
   for (unsigned i = 0; i < completions; i++) {
-    arrayData[i] = cqes[i].user_data;
-    arrayData[i + completions] = cqes[i].res;
+    arrayData[i] = cqes[i]->user_data;
+    arrayData[i + completions] = cqes[i]->res;
+
+    io_uring_cqe_seen(ring, cqes[i]);
   }
 
-  fflush(stdout);
+  (*jni)->ReleaseLongArrayElements(jni, retArray, arrayData, 0);
 
-  (*jni)->SetLongArrayRegion(jni, retArray, 0, completions * 2, arrayData);
+  return retArray;
+}
 
-  free(arrayData);
+JNIEXPORT jlongArray JNICALL Java_zio_uring_native_Native_await(JNIEnv *jni, jobject _ignore, jlong ringPtr, jint count) {
+  struct io_uring *ring = (struct io_uring *) ringPtr;
+  struct io_uring_cqe **cqes = malloc(sizeof(struct io_uring_cqe *) * count);
+
+  unsigned completions = io_uring_peek_batch_cqe(ring, cqes, count);
+  
+  unsigned retArrayLen = completions * 2;
+  jlongArray retArray = (*jni)->NewLongArray(jni, retArrayLen);
+
+  if (retArray == NULL)
+    return NULL;
+
+  jlong *arrayData = (*jni)->GetLongArrayElements(jni, retArray, NULL);
+
+  for (unsigned i = 0; i < completions; i++) {
+    arrayData[i] = cqes[i]->user_data;
+    arrayData[i + completions] = cqes[i]->res;
+
+    io_uring_cqe_seen(ring, cqes[i]);
+  }
+
+  (*jni)->ReleaseLongArrayElements(jni, retArray, arrayData, 0);
 
   return retArray;
 }

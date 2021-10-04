@@ -13,7 +13,11 @@ class Native {
 
   @native def write(queue: Long, requestId: Long, fd: Int, offset: Long, data: Array[Byte]): Unit
 
-  @native def await(queue: Long): Array[Long]
+  @native def submit(queue: Long): Unit
+
+  @native def peek(queue: Long, count: Int): Array[Long]
+
+  @native def await(queue: Long, count: Int): Array[Long]
 
   @native def openFile(path: String): Int
 }

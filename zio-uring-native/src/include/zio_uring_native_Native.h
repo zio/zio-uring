@@ -34,18 +34,34 @@ JNIEXPORT jobject JNICALL Java_zio_uring_native_Native_read
 /*
  * Class:      zio_uring_native_Native
  * Method:     write
- * Signature:  (JJIJ[B)Ljava/nio/ByteBuffer;
+ * Signature:  (JJIJ[B)V
  */
-JNIEXPORT jobject JNICALL Java_zio_uring_native_Native_write
+JNIEXPORT void JNICALL Java_zio_uring_native_Native_write
   (JNIEnv *, jobject, jlong, jlong, jint, jlong, jbyteArray);
 
 /*
  * Class:      zio_uring_native_Native
+ * Method:     submit
+ * Signature:  (J)V
+ */
+JNIEXPORT void JNICALL Java_zio_uring_native_Native_submit
+  (JNIEnv *, jobject, jlong);
+
+/*
+ * Class:      zio_uring_native_Native
+ * Method:     peek
+ * Signature:  (JI)[J
+ */
+JNIEXPORT jlongArray JNICALL Java_zio_uring_native_Native_peek
+  (JNIEnv *, jobject, jlong, jint);
+
+/*
+ * Class:      zio_uring_native_Native
  * Method:     await
- * Signature:  (J)[J
+ * Signature:  (JI)[J
  */
 JNIEXPORT jlongArray JNICALL Java_zio_uring_native_Native_await
-  (JNIEnv *, jobject, jlong);
+  (JNIEnv *, jobject, jlong, jint);
 
 /*
  * Class:      zio_uring_native_Native

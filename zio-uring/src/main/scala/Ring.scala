@@ -5,9 +5,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.nio.ByteBuffer
 
-class Ring(native: Native, ringFd: Long) {
+class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
   val pendingReqs = new ConcurrentHashMap[Long, Callback]
-  val requestIds = new AtomicLong(0)
+  val requestIds = new AtomicLong(Long.MinValue)
 
   def close(): Unit =
     native.destroyQueue(ringFd)
@@ -31,9 +31,12 @@ class Ring(native: Native, ringFd: Long) {
     ()
   }
 
+  def submit(): Unit =
+    native.submit(ringFd)
+
   def await(): Unit = {
-    val data = native.await(ringFd)
-    println(s"data: ${data.mkString(",")}")
+    val data = native.peek(ringFd, completionsChunkSize)
+    println(data.mkString(","))
     val (reqIds, results) = data.splitAt(data.size / 2)
 
     for ((reqId, result) <- reqIds.zip(results)) {
@@ -54,8 +57,8 @@ class Ring(native: Native, ringFd: Long) {
 object Ring {
   private val native = new Native
 
-  def make(): Ring =
-    new Ring(native, native.initQueue(128))
+  def make(queueSize: Int, completionsChunkSize: Int): Ring =
+    new Ring(native, native.initQueue(queueSize), completionsChunkSize)
 }
 
 
