@@ -48,7 +48,12 @@ lazy val zioUring = project
   .settings(testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"))
   .settings(dottySettings)
   .settings(javah / target := (zioUringNative / nativeCompile / sourceDirectory).value / "include")
-  .dependsOn(zioUringNative)
+  .dependsOn(zioUringRs)
+
+lazy val zioUringRs = project
+  .in(file("zio-uring-rust"))
+  .settings(nativeCompile / sourceDirectory := baseDirectory.value)
+  .enablePlugins(JniNative)
 
 lazy val zioUringNative = project
   .in(file("zio-uring-native"))

@@ -1,6 +1,6 @@
 package zio.uring.native
 
-import ch.jodersky.jni.nativeLoader
+import com.github.sbt.jni.nativeLoader
 import java.nio.ByteBuffer
 
 @nativeLoader("ziouring0")
