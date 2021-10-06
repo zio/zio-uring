@@ -16,4 +16,4 @@ addSbtPlugin("org.scalameta"                     % "sbt-mdoc"                   
 addSbtPlugin("org.scalameta"                     % "sbt-scalafmt"                  % "2.4.2")
 addSbtPlugin("pl.project13.scala"                % "sbt-jcstress"                  % "0.2.0")
 addSbtPlugin("pl.project13.scala"                % "sbt-jmh"                       % "0.4.0")
-addSbtPlugin("com.github.sbt"                       % "sbt-jni"                       % "1.5.3")
+addSbtPlugin("com.github.sbt"                    % "sbt-jni"                       % "1.5.3")

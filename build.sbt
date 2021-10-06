@@ -51,7 +51,7 @@ lazy val zioUring = project
   .dependsOn(zioUringRs)
 
 lazy val zioUringRs = project
-  .in(file("zio-uring-rust"))
+  .in(file("zio-uring-rs"))
   .settings(nativeCompile / sourceDirectory := baseDirectory.value)
   .enablePlugins(JniNative)
 

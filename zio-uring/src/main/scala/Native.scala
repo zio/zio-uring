@@ -3,7 +3,7 @@ package zio.uring.native
 import com.github.sbt.jni.nativeLoader
 import java.nio.ByteBuffer
 
-@nativeLoader("ziouring0")
+@nativeLoader("ziouring")
 class Native {
   @native def initQueue(depth: Int): Long
 
@@ -20,4 +20,15 @@ class Native {
   @native def await(queue: Long, count: Int): Array[Long]
 
   @native def openFile(path: String): Int
+
+  @native def readFile(path: String, cb: NativeCallback): Unit
+}
+
+trait NativeCallback {
+  def readBuffer(buf: ByteBuffer): Unit
+}
+object NativeCallback {
+  def apply(cb: ByteBuffer => Unit): NativeCallback = new NativeCallback {
+    def readBuffer(buf: ByteBuffer): Unit = cb(buf)
+  }
 }

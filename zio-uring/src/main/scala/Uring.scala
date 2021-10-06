@@ -12,6 +12,11 @@ object Uring extends App {
           ring.read(fd, 0, 64, chunk => println(new String(chunk.toArray[Byte], "UTF-8")))
           ring.submit()
           ring.await()
+          val out = ChunkBuilder.make[Byte]()
+          val path = "/etc/passwd"
+          ring.readFile(path, (c: Chunk[Byte]) => out ++= c)
+
+          println(out.result().map("%02X".format(_)))
         }
       }
     }.exitCode
