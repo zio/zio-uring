@@ -7,8 +7,8 @@ use jni::sys::{jint, jlong};
 use io_uring::{opcode, types, IoUring};
 use std::ffi::CString;
 use std::mem::transmute;
-use std::os::unix::io::AsRawFd;
-use std::{fs, thread, time};
+use std::os::unix::ffi::OsStrExt;
+use std::{thread, time};
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_zio_uring_native_Native_initRing(
@@ -35,13 +35,9 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_submit(
     _ignore: JObject,
     ringPtr: jlong,
 ) -> () {
-    println!("Submitting ring {}", ringPtr);
     let uring = &mut *(ringPtr as *mut IoUring);
     let submitted = uring.submit().unwrap();
-    println!("Submitted {} events", submitted);
-
-    let sq = uring.submission();
-    println!("{} events were dropped", sq.dropped());
+    println!("Submitted {} events on ring {}", submitted, ringPtr);
 }
 
 #[no_mangle]
@@ -67,7 +63,6 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_read(
         .submission()
         .push(&read_e)
         .expect("submission queue is full");
-    println!("Queue length after push: {}", uring.submission().len());
 }
 
 #[no_mangle]
@@ -89,28 +84,31 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_peek(
     while count_inner < count && !cq.is_empty() {
         let cqe = cq.next().unwrap();
         cq.sync();
-        println!("Found completion {}", cqe.user_data());
-        let ud_as_bytes: [u8; 8] = transmute((cqe.user_data() as i64).to_be());
+        println!(
+            "Found completion {}, {}, {}",
+            cqe.user_data(),
+            cqe.result(),
+            cqe.flags()
+        );
+        let ud_as_bytes: [u8; 8] = transmute(cqe.user_data().to_be());
         for b in ud_as_bytes {
             buf[buf_offset] = b;
             buf_offset += 1;
         }
 
-        let result_as_bytes: [u8; 8] = transmute((cqe.result() as i64).to_be());
+        let result_as_bytes: [u8; 4] = transmute(cqe.result().to_be());
         for b in result_as_bytes {
             buf[buf_offset] = b;
             buf_offset += 1;
         }
 
-        let flags_as_bytes: [u8; 8] = transmute((cqe.flags() as i64).to_be());
+        let flags_as_bytes: [u8; 4] = transmute(cqe.flags().to_be());
         for b in flags_as_bytes {
             buf[buf_offset] = b;
             buf_offset += 1;
         }
         count_inner += 1;
     }
-
-    println!("Peeked {} completions", count_inner);
 }
 
 #[no_mangle]
@@ -122,7 +120,6 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_await(
     buffer: JByteBuffer,
 ) -> () {
     println!("Awaiting {} completions on ring {}", count, ringPtr);
-
     let uring: &mut IoUring = &mut *(ringPtr as *mut IoUring);
 
     let poll_interval = time::Duration::from_micros(50);
@@ -137,19 +134,18 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_await(
         match cq.next() {
             Some(cqe) => {
                 println!("Found completions {}", cqe.user_data());
-                let ud_as_bytes: [u8; 8] = transmute((cqe.user_data() as i64).to_be());
+                let ud_as_bytes: [u8; 8] = transmute(cqe.user_data().to_be());
                 for b in ud_as_bytes {
                     buf[buf_offset] = b;
                     buf_offset += 1;
                 }
 
-                let result_as_bytes: [u8; 8] = transmute((cqe.result() as i64).to_be());
+                let result_as_bytes: [u8; 4] = transmute(cqe.result().to_be());
                 for b in result_as_bytes {
                     buf[buf_offset] = b;
                     buf_offset += 1;
                 }
-
-                let flags_as_bytes: [u8; 8] = transmute((cqe.flags() as i64).to_be());
+                let flags_as_bytes: [u8; 4] = transmute(cqe.flags().to_be());
                 for b in flags_as_bytes {
                     buf[buf_offset] = b;
                     buf_offset += 1;
@@ -168,52 +164,21 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_openFile(
     ringPtr: jlong,
     reqId: jlong,
     path: JString,
-) -> jint {
+) -> () {
     let uring: &mut IoUring = &mut *(ringPtr as *mut IoUring);
 
     let dirfd = types::Fd(libc::AT_FDCWD);
     let rpath: String = env.get_string(path).unwrap().into();
-    let fpath = CString::new(rpath.as_bytes()).unwrap();
+    let os_path = std::ffi::OsString::from(rpath);
+    let fpath = CString::new(os_path.as_os_str().as_bytes()).unwrap();
     let openhow = types::OpenHow::new().flags(libc::O_CREAT as _);
-    let open_e = opcode::OpenAt2::new(dirfd, fpath.as_ptr(), &openhow)
-        .build()
-        .user_data(reqId as u64);
-
-    uring.submission().push(&open_e).expect("queue is full");
-    uring.submit_and_wait(1).unwrap();
-
-    let cqes = uring.completion().collect::<Vec<_>>();
-
-    let fd = cqes[0].result();
-
-    println!("Opened file descriptor {}", fd);
-
-    fd
-}
-
-#[no_mangle]
-pub unsafe extern "system" fn Java_zio_uring_native_Native_readFile(
-    env: JNIEnv,
-    _ignore: JObject,
-    ringPtr: jlong,
-    path: JString,
-    buf: JByteBuffer,
-) -> () {
-    let uring: &mut IoUring = &mut *(ringPtr as *mut IoUring);
-
-    let fpath: String = env.get_string(path).unwrap().into();
-
-    let fd = fs::File::open(fpath).unwrap();
-    let buf: &mut [u8] = env.get_direct_buffer_address(buf).unwrap();
-
-    let read_e = opcode::Read::new(types::Fd(fd.as_raw_fd()), buf.as_mut_ptr(), buf.len() as _)
-        .build()
-        .user_data(0x42);
+    let open_e = opcode::OpenAt2::new(dirfd, fpath.as_ptr(), &openhow);
 
     uring
         .submission()
-        .push(&read_e)
-        .expect("submission queue is full");
-
-    uring.submit_and_wait(1).unwrap();
+        .push(&open_e.build().user_data(reqId as u64))
+        .expect("queue is full");
+    // For some reason, if we don't submit this now, then we get an EINVAL error code.
+    uring.submit().unwrap();
 }
+
