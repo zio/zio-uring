@@ -1,23 +1,23 @@
 package zio.uring.native
 
-import ch.jodersky.jni.nativeLoader
+import com.github.sbt.jni.nativeLoader
 import java.nio.ByteBuffer
 
-@nativeLoader("ziouring0")
+@nativeLoader("ziouring")
 class Native {
-  @native def initQueue(depth: Int): Long
+  @native def initRing(entries: Int): Long
 
-  @native def destroyQueue(queue: Long): Unit
+  @native def destroyRing(ringPtr: Long): Unit
 
-  @native def read(queue: Long, requestId: Long, fd: Int, offset: Long, length: Long): ByteBuffer
+  @native def read(ringPtr: Long, reqId: Long, fd: Int, offset: Long, buffer: ByteBuffer): Unit
 
-  @native def write(queue: Long, requestId: Long, fd: Int, offset: Long, data: Array[Byte]): Unit
+  @native def write(ringPtr: Long, reqId: Long, fd: Int, offset: Long, data: ByteBuffer): Unit
 
-  @native def submit(queue: Long): Unit
+  @native def submit(ringPtr: Long): Unit
 
-  @native def peek(queue: Long, count: Int): Array[Long]
+  @native def peek(ringPtr: Long, count: Int, buffer: ByteBuffer): Unit
 
-  @native def await(queue: Long, count: Int): Array[Long]
+  @native def await(ringPtr: Long, count: Int, buffer: ByteBuffer): Unit
 
-  @native def openFile(path: String): Int
+  @native def openFile(ringPtr: Long, reqId: Long, path: String): Unit
 }
