@@ -73,7 +73,7 @@ object RingIO {
     } yield (ring, poller)
 
     effect.toManaged { case (ring, poller) =>
-      shutdown.set(true)
+      UIO(shutdown.set(true)) *>
       poller.await *> ring.close().orDie
     }.map(_._1)
   }
