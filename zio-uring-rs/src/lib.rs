@@ -2,9 +2,9 @@ use jni::JNIEnv;
 
 use jni::objects::{JByteBuffer, JObject, JString};
 
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 
-use io_uring::{opcode, types, IoUring};
+use io_uring::{opcode, squeue, types, IoUring};
 use std::ffi::CString;
 use std::mem::transmute;
 use std::os::unix::ffi::OsStrExt;
@@ -12,17 +12,21 @@ use std::{thread, time};
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_zio_uring_native_Native_initRing(
-    env: JNIEnv,
+    _env: JNIEnv,
     _ignore: JObject,
     entries: jint,
 ) -> jlong {
+    // let uring = IoUring::builder().setup_iopoll().build(entries as _).unwrap();
     let uring = IoUring::new(entries as _).unwrap();
-    Box::into_raw(Box::new(uring)) as jlong
+    let ptr = Box::into_raw(Box::new(uring)) as jlong;
+    println!("Opened ring {}", ptr);
+    ptr
 }
 
 #[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "system" fn Java_zio_uring_native_Native_destroyRing(
-    env: JNIEnv,
+    _env: JNIEnv,
     _ignore: JObject,
     ringPtr: jlong,
 ) -> () {
@@ -30,34 +34,42 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_destroyRing(
 }
 
 #[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "system" fn Java_zio_uring_native_Native_submit(
-    env: JNIEnv,
+    _env: JNIEnv,
     _ignore: JObject,
     ringPtr: jlong,
 ) -> () {
     let uring = &mut *(ringPtr as *mut IoUring);
-    let submitted = uring.submit().unwrap();
-    println!("Submitted {} events on ring {}", submitted, ringPtr);
+    uring.submit().unwrap();
 }
 
 #[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "system" fn Java_zio_uring_native_Native_read(
     env: JNIEnv,
     _ignore: JObject,
     ringPtr: jlong,
     reqId: jlong,
     fd: jint,
-    offset: jlong,
+    _offset: jlong,
     buffer: JByteBuffer,
+    ioLinked: jboolean,
 ) -> () {
-    println!("Reading fd {} on ring {}", fd, ringPtr);
     let uring: &mut IoUring = &mut *(ringPtr as *mut IoUring);
 
     let buf: &mut [u8] = env.get_direct_buffer_address(buffer).unwrap();
     let length = env.get_direct_buffer_capacity(buffer).unwrap() as u32;
-    let read_e = opcode::Read::new(types::Fd(fd), buf.as_mut_ptr(), length)
-        .build()
-        .user_data(reqId as u64);
+    let read_e = if ioLinked != 0 {
+        opcode::Read::new(types::Fd(fd), buf.as_mut_ptr(), length)
+            .build()
+            .user_data(reqId as u64)
+    } else {
+        opcode::Read::new(types::Fd(fd), buf.as_mut_ptr(), length)
+            .build()
+            .user_data(reqId as u64)
+            .flags(squeue::Flags::IO_LINK)
+    };
 
     uring
         .submission()
@@ -66,6 +78,42 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_read(
 }
 
 #[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "system" fn Java_zio_uring_native_Native_write(
+    env: JNIEnv,
+    _ignore: JObject,
+    ringPtr: jlong,
+    reqId: jlong,
+    fd: jint,
+    _offset: jlong,
+    buffer: JByteBuffer,
+    ioLinked: jboolean,
+) -> () {
+    let uring: &mut IoUring = &mut *(ringPtr as *mut IoUring);
+
+    println!("Writing to file descriptor {}", fd);
+
+    let buf: &mut [u8] = env.get_direct_buffer_address(buffer).unwrap();
+    let length = env.get_direct_buffer_capacity(buffer).unwrap() as u32;
+    let write_e = if ioLinked != 0 {
+        opcode::Write::new(types::Fd(fd), buf.as_mut_ptr(), length)
+            .build()
+            .user_data(reqId as u64)
+    } else {
+        opcode::Write::new(types::Fd(fd), buf.as_mut_ptr(), length)
+            .build()
+            .user_data(reqId as u64)
+            .flags(squeue::Flags::IO_LINK)
+    };
+
+    uring
+        .submission()
+        .push(&write_e)
+        .expect("submission queue is full");
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "system" fn Java_zio_uring_native_Native_peek(
     env: JNIEnv,
     _ignore: JObject,
@@ -84,12 +132,6 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_peek(
     while count_inner < count && !cq.is_empty() {
         let cqe = cq.next().unwrap();
         cq.sync();
-        println!(
-            "Found completion {}, {}, {}",
-            cqe.user_data(),
-            cqe.result(),
-            cqe.flags()
-        );
         let ud_as_bytes: [u8; 8] = transmute(cqe.user_data().to_be());
         for b in ud_as_bytes {
             buf[buf_offset] = b;
@@ -112,6 +154,7 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_peek(
 }
 
 #[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "system" fn Java_zio_uring_native_Native_await(
     env: JNIEnv,
     _ignore: JObject,
@@ -119,7 +162,6 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_await(
     count: jint,
     buffer: JByteBuffer,
 ) -> () {
-    println!("Awaiting {} completions on ring {}", count, ringPtr);
     let uring: &mut IoUring = &mut *(ringPtr as *mut IoUring);
 
     let poll_interval = time::Duration::from_micros(50);
@@ -133,7 +175,6 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_await(
     while count_inner < count {
         match cq.next() {
             Some(cqe) => {
-                println!("Found completions {}", cqe.user_data());
                 let ud_as_bytes: [u8; 8] = transmute(cqe.user_data().to_be());
                 for b in ud_as_bytes {
                     buf[buf_offset] = b;
@@ -158,6 +199,7 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_await(
 }
 
 #[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "system" fn Java_zio_uring_native_Native_openFile(
     env: JNIEnv,
     _ignore: JObject,
@@ -171,7 +213,7 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_openFile(
     let rpath: String = env.get_string(path).unwrap().into();
     let os_path = std::ffi::OsString::from(rpath);
     let fpath = CString::new(os_path.as_os_str().as_bytes()).unwrap();
-    let openhow = types::OpenHow::new().flags(libc::O_CREAT as _);
+    let openhow = types::OpenHow::new().flags(libc::O_RDWR as _);
     let open_e = opcode::OpenAt2::new(dirfd, fpath.as_ptr(), &openhow);
 
     uring
@@ -182,3 +224,19 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_openFile(
     uring.submit().unwrap();
 }
 
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "system" fn Java_zio_uring_native_Native_cancel(
+    _env: JNIEnv,
+    _ignore: JObject,
+    ringPtr: jlong,
+    reqId: jlong,
+    opReqId: jlong,
+) -> () {
+    let uring: &mut IoUring = &mut *(ringPtr as *mut IoUring);
+
+    let cancel_e = opcode::AsyncCancel::new(opReqId as u64)
+        .build()
+        .user_data(reqId as u64);
+    uring.submission().push(&cancel_e).expect("queue is full");
+}
