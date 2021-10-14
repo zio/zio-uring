@@ -18,9 +18,7 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_initRing(
 ) -> jlong {
     // let uring = IoUring::builder().setup_iopoll().build(entries as _).unwrap();
     let uring = IoUring::new(entries as _).unwrap();
-    let ptr = Box::into_raw(Box::new(uring)) as jlong;
-    println!("Opened ring {}", ptr);
-    ptr
+    Box::into_raw(Box::new(uring)) as jlong
 }
 
 #[no_mangle]
@@ -90,8 +88,6 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_write(
     ioLinked: jboolean,
 ) -> () {
     let uring: &mut IoUring = &mut *(ringPtr as *mut IoUring);
-
-    println!("Writing to file descriptor {}", fd);
 
     let buf: &mut [u8] = env.get_direct_buffer_address(buffer).unwrap();
     let length = env.get_direct_buffer_capacity(buffer).unwrap() as u32;
