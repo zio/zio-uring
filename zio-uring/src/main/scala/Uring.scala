@@ -15,11 +15,10 @@ object Uring extends App {
           fd           <- ring.open(tempFile.toString)
           _            <- ring.open("not-a-file").catchAll(ioe => putStrLn(s"File open failed with message: ${ioe.getMessage()}"))
           _            <- putStrLn(s"Opened $fd")
-          write1       <- ring.write(fd, 0, "foobar".getBytes(), false).fork
+          bytesWritten <- ring.write(fd, 0, "foobar".getBytes(), false)
+          _            <- putStrLn(s"Wrote $bytesWritten bytes to $fd")
           read1        <- ring.read(fd, 0, 1024, true).fork
           read2        <- ring.read(fd, 0, 1024, false).fork
-          bytesWritten <- write1.join
-          _            <- putStrLn(s"Wrote $bytesWritten bytes to $fd")
           data1        <- read1.join
           data2        <- read2.join
           _            <- putStrLn(s"Read:\n${new String(data1.toArray[Byte], "UTF-8")}")

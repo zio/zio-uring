@@ -3,7 +3,6 @@ package zio.uring
 import zio._
 import zio.uring.native._
 import java.io.IOException
-import java.util.concurrent.atomic.AtomicBoolean
 
 class RingIO(uring: Ring) {
   def open(path: String): IO[IOException, FileDescriptor] =
@@ -61,20 +60,14 @@ class RingIO(uring: Ring) {
 }
 
 object RingIO {
-  def make(queueSize: Int, completionsChunkSize: Int, shutdown: AtomicBoolean): IO[IOException, RingIO] = IO.succeed {
-    new RingIO(Ring.make(queueSize, completionsChunkSize, shutdown))
+  def make(queueSize: Int, completionsChunkSize: Int): IO[IOException, RingIO] = IO.succeed {
+    new RingIO(Ring.make(queueSize, completionsChunkSize))
   }
 
   def managed(queueSize: Int, completionsChunkSize: Int): ZManaged[Any, IOException, RingIO] = {
-    val shutdown = new AtomicBoolean(false)
-    val effect   = for {
-      ring   <- make(queueSize, completionsChunkSize, shutdown)
-      poller <- ring.poll().repeatUntil(_ => shutdown.get()).fork
-    } yield (ring, poller)
-
-    effect.toManaged { case (ring, poller) =>
-      UIO(shutdown.set(true)) *>
-      poller.await *> ring.close().orDie
-    }.map(_._1)
+    for {
+      ring <- make(queueSize,completionsChunkSize).toManaged(_.close().orDie)
+      _ <- ring.poll().forever.forkManaged
+    } yield ring
   }
 }

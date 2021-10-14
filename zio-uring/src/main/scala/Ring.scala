@@ -7,19 +7,24 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 
-class Ring(native: Native, ringFd: Long, completionsChunkSize: Int, shutdown: AtomicBoolean) {
+class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
   val pendingReqs = new ConcurrentHashMap[Long, Callback]
   val requestIds  = new AtomicLong(Long.MinValue)
 
+  val shutdown: AtomicBoolean = new AtomicBoolean(true)
+
   private val resultBuffer: ByteBuffer = ByteBuffer.allocateDirect(1024).order(ByteOrder.BIG_ENDIAN)
 
-  def close(): Unit =
+  def close(): Unit = {
+    shutdown.set(true)
     native.destroyRing(ringFd)
+  }
 
   def open(path: String, cb: Int => Unit): Long = {
     val reqId = requestIds.getAndIncrement()
     pendingReqs.put(reqId, Callback.OpenFile(cb))
     native.openFile(ringFd, reqId, path)
+    shutdown.set(false)
     reqId
   }
 
@@ -88,13 +93,14 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int, shutdown: At
     }
   }
 
-  def cancel(requestId: Long): Unit = {
-    val reqId = requestIds.getAndIncrement()
-    pendingReqs.remove(requestId) match {
-      case null => ()
-      case c    => native.cancel(ringFd, reqId, requestId)
+  def cancel(requestId: Long): Unit =
+    if (!shutdown.get()) {
+      val reqId = requestIds.getAndIncrement()
+      pendingReqs.remove(requestId) match {
+        case null => ()
+        case c    => native.cancel(ringFd, reqId, requestId)
+      }
     }
-  }
 
   def erase[A](cb: A => Unit): Any => Unit =
     cb.asInstanceOf[Any => Unit]
@@ -103,16 +109,9 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int, shutdown: At
 object Ring {
   private val native = new Native
 
-  def make(queueSize: Int, completionsChunkSize: Int, shutdown: AtomicBoolean): Ring = {
-    val uring      = new Ring(native, native.initRing(queueSize), completionsChunkSize, shutdown)
-    val pollThread = new Thread(() =>
-      while (true)
-        uring.peek()
-    )
-    pollThread.setDaemon(true)
-    pollThread.start()
-    uring
-  }
+  def make(queueSize: Int, completionsChunkSize: Int): Ring =
+    new Ring(native, native.initRing(queueSize), completionsChunkSize)
+
 }
 
 case class FileDescriptor(fd: Int) extends AnyVal

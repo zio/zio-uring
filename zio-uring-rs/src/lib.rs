@@ -131,7 +131,6 @@ pub unsafe extern "system" fn Java_zio_uring_native_Native_peek(
 
     while count_inner < count && !cq.is_empty() {
         let cqe = cq.next().unwrap();
-        cq.sync();
         let ud_as_bytes: [u8; 8] = transmute(cqe.user_data().to_be());
         for b in ud_as_bytes {
             buf[buf_offset] = b;
