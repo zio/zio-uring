@@ -87,6 +87,8 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
         case Callback.Read(buf, cb) if retCode < 0  => cb(Left(retCode))
         case c @ Callback.Write(cb)                 => cb(retCode)
         case c @ Callback.OpenFile(cb)              => cb(retCode)
+        // Ignore operations cancelled after completion
+        case Callback.Cancelled                     => ()
         // Need a better way to know when we've read everything....
         case null                                   => run = false //sys.error(s"Oops: nonexistent request $reqId completed")
       }
@@ -96,7 +98,10 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
   def cancel(requestId: Long): Unit =
     if (!shutdown.get()) {
       val reqId = requestIds.getAndIncrement()
-      pendingReqs.remove(requestId) match {
+      // If the request is still pending completion replace the callback with a NOP
+      // since we cannot guarantee the cancellation will happen before the existing
+      // operation is cancelled 
+      pendingReqs.replace(requestId, Callback.Cancelled) match {
         case null => ()
         case c    => native.cancel(ringFd, reqId, requestId)
       }
@@ -121,4 +126,5 @@ object Callback {
   case class Read(buf: ByteBuffer, cb: Either[Int, Chunk[Byte]] => Unit) extends Callback
   case class Write(cb: Int => Unit)                                      extends Callback
   case class OpenFile(cb: Int => Unit)                                   extends Callback
+  case object Cancelled                                                  extends Callback
 }
