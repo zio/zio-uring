@@ -6,17 +6,50 @@ import java.io.IOException
 
 class RingIO(uring: Ring) {
   def open(path: String): IO[IOException, FileDescriptor] =
-    IO.effectAsync { cb =>
-      println(s"Opening file at path $path")
-      uring.open(path, fd => cb(IO.succeed(FileDescriptor(fd))))
+    IO.effectAsyncInterrupt { cb =>
+      val reqId = uring.open(
+        path,
+        result =>
+          cb(
+            if (result < 0) IO.fail(new IOException(s"Open file at path $path failed with errno $result"))
+            else IO.succeed(FileDescriptor(result))
+          )
+      )
       uring.submit()
+      Left(URIO.effectTotal(uring.cancel(reqId)))
     }
 
-  def read(file: FileDescriptor, offset: Long, length: Int): IO[IOException, Chunk[Byte]] =
-    IO.effectAsync { cb =>
-      println(s"Reading $file")
-      uring.read(file, offset, length, data => cb(IO.succeed(data)))
-      uring.submit()
+  def read(file: FileDescriptor, offset: Long, length: Int, ioLinked: Boolean): IO[IOException, Chunk[Byte]] =
+    IO.effectAsyncInterrupt { cb =>
+      val reqId = uring.read(
+        file,
+        offset,
+        length,
+        ioLinked,
+        {
+          case Left(errno) => cb(IO.fail(new IOException(s"Read on file $file failed with error $errno")))
+          case Right(data) => cb(IO.succeed(data))
+        }
+      )
+      if (!ioLinked) uring.submit()
+      Left(URIO.effectTotal(uring.cancel(reqId)))
+    }
+
+  def write(file: FileDescriptor, offset: Long, data: Array[Byte], ioLinked: Boolean): IO[IOException, Int] =
+    IO.effectAsyncInterrupt { cb =>
+      val reqId = uring.write(
+        file,
+        offset,
+        data,
+        ioLinked,
+        result =>
+          cb(
+            if (result < 0) IO.fail(new IOException(s"Failed to write to file $file with errno $result"))
+            else IO.succeed(result)
+          )
+      )
+      if (!ioLinked) uring.submit()
+      Left(URIO.effectTotal(uring.cancel(reqId)))
     }
 
   def submit(): IO[IOException, Unit] = IO.effectTotal(uring.submit())
@@ -29,5 +62,12 @@ class RingIO(uring: Ring) {
 object RingIO {
   def make(queueSize: Int, completionsChunkSize: Int): IO[IOException, RingIO] = IO.succeed {
     new RingIO(Ring.make(queueSize, completionsChunkSize))
+  }
+
+  def managed(queueSize: Int, completionsChunkSize: Int): ZManaged[Any, IOException, RingIO] = {
+    for {
+      ring <- make(queueSize,completionsChunkSize).toManaged(_.close().orDie)
+      _ <- ring.poll().forever.forkManaged
+    } yield ring
   }
 }

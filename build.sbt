@@ -1,4 +1,5 @@
 import BuildHelper._
+import com.github.sbt.jni.build.Cargo
 
 inThisBuild(
   List(
@@ -52,7 +53,10 @@ lazy val zioUring = project
 
 lazy val zioUringRs = project
   .in(file("zio-uring-rs"))
-  .settings(nativeCompile / sourceDirectory := baseDirectory.value)
+  .settings(
+    nativeCompile / sourceDirectory := baseDirectory.value,
+    // nativeBuildTool := Cargo.make(release = false)
+  )
   .enablePlugins(JniNative)
 
 lazy val zioUringNative = project
