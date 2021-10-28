@@ -19,6 +19,18 @@ class RingIO(uring: Ring) {
       Left(URIO.effectTotal(uring.cancel(reqId)))
     }
 
+  def statx(path: String): IO[IOException, StatxBuffer] =
+    IO.effectAsyncInterrupt { cb =>
+      val reqId = uring.statx(
+        path,
+        {
+          case Left(errno) => cb(IO.fail(new IOException(s"Statx on file $path failed with error $errno")))
+          case Right(data) => cb(IO.succeed(data))
+        }
+      )
+      Left(URIO.effectTotal(uring.cancel(reqId)))
+    }
+
   def read(file: FileDescriptor, offset: Long, length: Int, ioLinked: Boolean): IO[IOException, Chunk[Byte]] =
     IO.effectAsyncInterrupt { cb =>
       val reqId = uring.read(
@@ -64,10 +76,9 @@ object RingIO {
     new RingIO(Ring.make(queueSize, completionsChunkSize))
   }
 
-  def managed(queueSize: Int, completionsChunkSize: Int): ZManaged[Any, IOException, RingIO] = {
+  def managed(queueSize: Int, completionsChunkSize: Int): ZManaged[Any, IOException, RingIO] =
     for {
-      ring <- make(queueSize,completionsChunkSize).toManaged(_.close().orDie)
-      _ <- ring.poll().forever.forkManaged
+      ring <- make(queueSize, completionsChunkSize).toManaged(_.close().orDie)
+      _    <- ring.poll().forever.forkManaged
     } yield ring
-  }
 }

@@ -54,7 +54,7 @@ lazy val zioUring = project
 lazy val zioUringRs = project
   .in(file("zio-uring-rs"))
   .settings(
-    nativeCompile / sourceDirectory := baseDirectory.value,
+    nativeCompile / sourceDirectory := baseDirectory.value
     // nativeBuildTool := Cargo.make(release = false)
   )
   .enablePlugins(JniNative)

@@ -21,6 +21,11 @@ object Uring extends App {
           read2        <- ring.read(fd, 0, 1024, false).fork
           data1        <- read1.join
           data2        <- read2.join
+          statx        <- ring.statx(tempFile.toString()).fork
+          // statx        <- ring.statx("/home/ubuntu/source/zio-uring/README.md").fork
+          _            <- ring.submit()
+          statxResult  <- statx.join
+          _            <- putStrLn(s"Statx szie: ${statxResult.size}")
           _            <- putStrLn(s"Read:\n${new String(data1.toArray[Byte], "UTF-8")}")
           _            <- putStrLn(s"Read:\n${new String(data2.toArray[Byte], "UTF-8")}")
         } yield ()

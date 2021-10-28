@@ -9,6 +9,8 @@ class Native {
 
   @native def destroyRing(ringPtr: Long): Unit
 
+  @native def statx(ringPtr: Long, reqId: Long, path: String, buffer: ByteBuffer): Long
+
   @native def read(ringPtr: Long, reqId: Long, fd: Int, offset: Long, buffer: ByteBuffer, ioLinked: Boolean): Unit
 
   @native def write(ringPtr: Long, reqId: Long, fd: Int, offset: Long, data: ByteBuffer, ioLinked: Boolean): Unit
@@ -19,7 +21,7 @@ class Native {
 
   @native def await(ringPtr: Long, count: Int, buffer: ByteBuffer): Unit
 
-  @native def openFile(ringPtr: Long, reqId: Long, path: String): Unit
+  @native def openFile(ringPtr: Long, reqId: Long, path: String): Long
 
   @native def cancel(ringPtr: Long, reqId: Long, opReqId: Long): Unit
 
@@ -27,4 +29,5 @@ class Native {
 
   @native def receive(ringPtr: Long, reqId: Long, socketFd: Int, buffer: ByteBuffer): Unit
 
+  @native def freeString(ptr: Long): Unit
 }
