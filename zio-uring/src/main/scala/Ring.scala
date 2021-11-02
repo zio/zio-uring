@@ -6,8 +6,9 @@ import java.util.concurrent.atomic.AtomicLong
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
+import zio.uring.Slab
 
-class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
+class Ring(native: Native, ringFd: Long, completionsChunkSize: Int, val slab: Slab) {
   val pendingReqs = new ConcurrentHashMap[Long, Callback]
   val requestIds  = new AtomicLong(Long.MinValue)
 
@@ -23,21 +24,30 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
   private val resultBuffer: ByteBuffer =
     ByteBuffer.allocateDirect(completionsChunkSize * 16).order(ByteOrder.BIG_ENDIAN)
 
+  def active: Boolean = !pendingReqs.isEmpty()
+
   def close(): Unit = {
     shutdown.set(true)
     native.destroyRing(ringFd)
   }
 
   def open(path: String, cb: Int => Unit): Long = {
-    val reqId  = requestIds.getAndIncrement()
-    val argPtr = native.openFile(ringFd, reqId, path)
-    pendingReqs.put(reqId, Callback.OpenFile(argPtr, cb))
+    val reqId    = requestIds.getAndIncrement()
+    val freeList = native.openFile(ringFd, reqId, path)
+    pendingReqs.put(reqId, Callback.OpenFile(freeList, cb))
     reqId
   }
 
   def statx(path: String, cb: Either[Int, StatxBuffer] => Unit): Long = {
     val reqId  = requestIds.getAndIncrement()
     val buffer = ByteBuffer.allocateDirect(256).order(ByteOrder.nativeOrder())
+    val argPtr = native.statx(ringFd, reqId, path, buffer)
+    pendingReqs.put(reqId, Callback.Statx(argPtr, buffer, cb))
+    reqId
+  }
+
+  def statx(path: String, buffer: ByteBuffer, cb: Either[Int, StatxBuffer] => Unit): Long = {
+    val reqId  = requestIds.getAndIncrement()
     val argPtr = native.statx(ringFd, reqId, path, buffer)
     pendingReqs.put(reqId, Callback.Statx(argPtr, buffer, cb))
     reqId
@@ -54,6 +64,34 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
     val buffer = ByteBuffer.allocateDirect(length)
     pendingReqs.put(reqId, Callback.Read(buffer, cb))
     native.read(ringFd, reqId, file.fd, offset, buffer, ioLinked)
+    reqId
+  }
+
+  def read(
+    file: FileDescriptor,
+    offset: Long,
+    buffer: ByteBuffer,
+    ioLinked: Boolean,
+    cb: Either[Int, Chunk[Byte]] => Unit
+  ): Long = {
+    val reqId = requestIds.getAndIncrement()
+    pendingReqs.put(reqId, Callback.Read(buffer, cb))
+    native.read(ringFd, reqId, file.fd, offset, buffer, ioLinked)
+    reqId
+  }
+
+  def readv(
+    file: FileDescriptor,
+    offset: Long,
+    length: Int,
+    iovecs: Array[Long],
+    ioLinked: Boolean,
+    cb: Either[Int, Chunk[Byte]] => Unit
+  ): Long = {
+    val reqId  = requestIds.getAndIncrement()
+    val buffer = ByteBuffer.allocateDirect(length)
+    pendingReqs.put(reqId, Callback.Read(buffer, cb))
+    native.readv(ringFd, reqId, file.fd, offset, iovecs, slab.blocks, slab.blockSize, ioLinked)
     reqId
   }
 
@@ -76,22 +114,34 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
         val retCode = resultBuffer.getInt()
         val _       = resultBuffer.getInt()
         pendingReqs.remove(reqId) match {
-          case Callback.Read(buf, cb) if retCode >= 0          => cb(Right(Chunk.fromByteBuffer(buf)))
-          case Callback.Read(buf, cb) if retCode < 0           => cb(Left(retCode))
-          case c @ Callback.Write(cb)                          => cb(retCode)
-          case c @ Callback.OpenFile(argPtr, cb)               =>
-            native.freeString(argPtr)
+          case Callback.Read(buf, cb) if retCode >= 0                             => cb(Right(Chunk.fromByteBuffer(buf)))
+          case Callback.Read(buf, cb) if retCode < 0                              => cb(Left(retCode))
+          case Callback.Readv(iovecs, cb) if retCode >= 0                         =>
+            val data   = Array.ofDim[Byte](iovecs.size * 3)
+            var idx    = 0
+            var offset = 0
+            while (idx < iovecs.size) {
+              iovecs(idx).get(data, idx * slab.blockSize, (idx + 1) * slab.blockSize - 1)
+              offset += slab.blockSize
+              idx += 1
+            }
+            cb(Right(data))
+          case Callback.Readv(_, cb) if retCode < 0                               => cb(Left(retCode))
+          case c @ Callback.Write(cb)                                             => cb(retCode)
+          case c @ Callback.OpenFile(Array(pathPtr, openHowPtr, openHowSize), cb) =>
+            native.freeString(pathPtr)
+            native.free(openHowPtr, openHowSize)
             cb(retCode)
-          case Callback.Statx(argPtr, buf, cb) if retCode >= 0 =>
+          case Callback.Statx(argPtr, buf, cb) if retCode >= 0                    =>
             native.freeString(argPtr)
             cb(StructDecoder[StatxBuffer].decode(buf))
-          case Callback.Statx(argPtr, _, cb) if retCode < 0    =>
+          case Callback.Statx(argPtr, _, cb) if retCode < 0                       =>
             native.freeString(argPtr)
             cb(Left(retCode))
           // Ignore operations cancelled after completion
-          case Callback.Cancelled                              => ()
+          case Callback.Cancelled                                                 => ()
           // Need a better way to know when we've read everything....
-          case null                                            => run = false //sys.error(s"Oops: nonexistent request $reqId completed")
+          case null                                                               => run = false //sys.error(s"Oops: nonexistent request $reqId completed")
         }
       }
     } else println(s"Ring is already shutdown")
@@ -108,22 +158,34 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
       val retCode = resultBuffer.getInt()
       val _       = resultBuffer.getInt()
       pendingReqs.remove(reqId) match {
-        case Callback.Read(buf, cb) if retCode >= 0          => cb(Right(Chunk.fromByteBuffer(buf)))
-        case Callback.Read(_, cb) if retCode < 0             => cb(Left(retCode))
-        case c @ Callback.Write(cb)                          => cb(retCode)
-        case c @ Callback.OpenFile(argPtr, cb)               =>
-          native.freeString(argPtr)
+        case Callback.Read(buf, cb) if retCode >= 0                             => cb(Right(Chunk.fromByteBuffer(buf)))
+        case Callback.Read(_, cb) if retCode < 0                                => cb(Left(retCode))
+        case Callback.Readv(iovecs, cb) if retCode >= 0                         =>
+          val data   = Array.ofDim[Byte](iovecs.size * 3)
+          var idx    = 0
+          var offset = 0
+          while (idx < iovecs.size) {
+            iovecs(idx).get(data, idx * slab.blockSize, (idx + 1) * slab.blockSize - 1)
+            offset += slab.blockSize
+            idx += 1
+          }
+          cb(Right(data))
+        case Callback.Readv(_, cb) if retCode < 0                               => cb(Left(retCode))
+        case c @ Callback.Write(cb)                                             => cb(retCode)
+        case c @ Callback.OpenFile(Array(pathPtr, openHowPtr, openHowSize), cb) =>
+          native.freeString(pathPtr)
+          native.free(openHowPtr, openHowSize)
           cb(retCode)
-        case Callback.Statx(argPtr, buf, cb) if retCode >= 0 =>
+        case Callback.Statx(argPtr, buf, cb) if retCode >= 0                    =>
           native.freeString(argPtr)
           cb(StructDecoder[StatxBuffer].decode(buf))
-        case Callback.Statx(argPtr, _, cb) if retCode < 0    =>
+        case Callback.Statx(argPtr, _, cb) if retCode < 0                       =>
           native.freeString(argPtr)
           cb(Left(retCode))
         // Ignore operations cancelled after completion
-        case Callback.Cancelled                              => ()
+        case Callback.Cancelled                                                 => ()
         // Need a better way to know when we've read everything....
-        case null                                            => run = false //sys.error(s"Oops: nonexistent request $reqId completed")
+        case null                                                               => run = false //sys.error(s"Oops: nonexistent request $reqId completed")
       }
     }
   }
@@ -147,8 +209,8 @@ class Ring(native: Native, ringFd: Long, completionsChunkSize: Int) {
 object Ring {
   private val native = new Native
 
-  def make(queueSize: Int, completionsChunkSize: Int): Ring =
-    new Ring(native, native.initRing(queueSize), completionsChunkSize)
+  def make(queueSize: Int, completionsChunkSize: Int, slab: Slab): Ring =
+    new Ring(native, native.initRing(queueSize), completionsChunkSize, slab)
 
 }
 
@@ -242,8 +304,9 @@ object StatxBuffer {
 sealed trait Callback
 object Callback {
   case class Read(buf: ByteBuffer, cb: Either[Int, Chunk[Byte]] => Unit)                extends Callback
+  case class Readv(iovecs: Array[ByteBuffer], cb: Either[Int, Array[Byte]] => Unit)     extends Callback
   case class Write(cb: Int => Unit)                                                     extends Callback
-  case class OpenFile(argPtr: Long, cb: Int => Unit)                                    extends Callback
+  case class OpenFile(freeList: Array[Long], cb: Int => Unit)                           extends Callback
   case class Statx(argPtr: Long, buf: ByteBuffer, cb: Either[Int, StatxBuffer] => Unit) extends Callback
   case object Cancelled                                                                 extends Callback
 }

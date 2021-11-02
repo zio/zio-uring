@@ -2,15 +2,19 @@ package zio.uring
 
 import java.nio.ByteBuffer
 import zio._
-import zio.duration._
-import zio.clock.Clock
 import java.util.concurrent.atomic.AtomicBoolean
+import zio.uring.native.Native
 
-case class Block(index: Int, buffer: ByteBuffer, size: Int)
+case class Block(index: Int, bufferAddress: Long, buffer: ByteBuffer, size: Int)
 
-private[uring] class Slab(private val buffer: Array[(AtomicBoolean, ByteBuffer)], blockSize: Int) {
+private[uring] class Slab(
+  buffer: Array[(AtomicBoolean, ByteBuffer)],
+  native: Native,
+  val blocks: Int,
+  val blockSize: Int
+) {
 
-  def allocate(timeout: Duration): ZIO[Any with Clock, Nothing, Option[Block]] =
+  def allocate(): UIO[Block] =
     UIO {
       var (idx, loop) = (0, true)
       while (loop)
@@ -23,9 +27,10 @@ private[uring] class Slab(private val buffer: Array[(AtomicBoolean, ByteBuffer)]
           idx += 1
         }
       idx
-    }.repeatUntil(_ >= 0).map(idx => Block(idx, buffer(idx)._2, blockSize)).timeout(timeout)
+    }.repeatUntil(_ >= 0)
+      .map(idx => Block(idx, native.byteBufferAddress(buffer(idx)._2), buffer(idx)._2, blockSize))
 
-  def free(block: Block): ZIO[Any with Clock, Nothing, Unit] =
+  def free(block: Block): UIO[Unit] =
     UIO {
       block.buffer.clear()
       buffer(block.index)._1.set(true)
@@ -34,13 +39,12 @@ private[uring] class Slab(private val buffer: Array[(AtomicBoolean, ByteBuffer)]
 }
 
 object Slab {
-  private[uring] def make(blocks: Int, blockSize: Int = 2048): ZManaged[Any with Clock, Nothing, Slab] =
-    for {
-      buffer <- UIO {
-                  val buffer = Array.ofDim[(AtomicBoolean, ByteBuffer)](blocks)
-                  for (idx <- 0 until blocks)
-                    buffer(idx) = (new AtomicBoolean(true), ByteBuffer.allocateDirect(blockSize))
-                  buffer
-                }.toManaged_
-    } yield new Slab(buffer, blockSize)
+  def make(blocks: Int, blockSize: Int = 2048): Slab = {
+    
+    val buffer = Array.ofDim[(AtomicBoolean, ByteBuffer)](blocks)
+    for (idx <- 0 until blocks)
+      buffer(idx) = (new AtomicBoolean(true), ByteBuffer.allocateDirect(blockSize))
+                
+    new Slab(buffer, new Native(), blocks, blockSize)
+  }
 }

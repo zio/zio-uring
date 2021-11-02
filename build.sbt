@@ -24,7 +24,7 @@ addCommandAlias("fmt", "all scalafmtSbt scalafmt test:scalafmt")
 addCommandAlias("fix", "; all compile:scalafix test:scalafix; all scalafmtSbt scalafmtAll")
 addCommandAlias("check", "; scalafmtSbtCheck; scalafmtCheckAll; compile:scalafix --check; test:scalafix --check")
 
-val zioVersion = "1.0.6"
+val zioVersion = "2.0.0-M4"
 
 lazy val root = project
   .in(file("."))
@@ -32,7 +32,7 @@ lazy val root = project
     skip in publish := true,
     unusedCompileDependenciesFilter -= moduleFilter("org.scala-js", "scalajs-library")
   )
-  .aggregate(zioUring, zioUringNative)
+  .aggregate(zioUring,zioUringRs)
 
 lazy val zioUring = project
   .in(file("zio-uring"))
@@ -42,13 +42,14 @@ lazy val zioUring = project
   .settings(
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio"          % zioVersion,
+      "dev.zio" %% "zio-streams"          % zioVersion,
       "dev.zio" %% "zio-test"     % zioVersion % "test",
       "dev.zio" %% "zio-test-sbt" % zioVersion % "test"
     )
   )
   .settings(testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"))
   .settings(dottySettings)
-  .settings(javah / target := (zioUringNative / nativeCompile / sourceDirectory).value / "include")
+  // .settings(javah / target := (zioUringNative / nativeCompile / sourceDirectory).value / "include")
   .dependsOn(zioUringRs)
 
 lazy val zioUringRs = project
@@ -59,10 +60,10 @@ lazy val zioUringRs = project
   )
   .enablePlugins(JniNative)
 
-lazy val zioUringNative = project
-  .in(file("zio-uring-native"))
-  .settings(nativeCompile / sourceDirectory := sourceDirectory.value)
-  .enablePlugins(JniNative)
+// lazy val zioUringNative = project
+//   .in(file("zio-uring-native"))
+//   .settings(nativeCompile / sourceDirectory := sourceDirectory.value)
+//   .enablePlugins(JniNative)
 
 lazy val docs = project
   .in(file("zio-uring-docs"))
