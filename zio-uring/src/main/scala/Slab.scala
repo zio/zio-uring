@@ -40,11 +40,11 @@ private[uring] class Slab(
 
 object Slab {
   def make(blocks: Int, blockSize: Int = 2048): Slab = {
-    
+
     val buffer = Array.ofDim[(AtomicBoolean, ByteBuffer)](blocks)
     for (idx <- 0 until blocks)
       buffer(idx) = (new AtomicBoolean(true), ByteBuffer.allocateDirect(blockSize))
-                
+
     new Slab(buffer, new Native(), blocks, blockSize)
   }
 }

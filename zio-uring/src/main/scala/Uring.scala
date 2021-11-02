@@ -5,14 +5,16 @@ import java.nio.file.Files
 
 object Uring extends ZIOAppDefault {
 
-  override def run = 
+  override def run =
     RingIO
       .managed(128, 32)
       .use { ring =>
         for {
           tempFile     <- IO.attempt(Files.createTempFile("temp", ".txt"))
           fd           <- ring.open(tempFile.toString)
-          _            <- ring.open("not-a-file").catchAll(ioe => Console.printError(s"File open failed with message: ${ioe.getMessage()}"))
+          _            <- ring
+                            .open("not-a-file")
+                            .catchAll(ioe => Console.printError(s"File open failed with message: ${ioe.getMessage()}"))
           _            <- Console.printLine(s"Opened $fd")
           bytesWritten <- ring.write(fd, 0, "foobar".getBytes(), false)
           _            <- Console.printLine(s"Wrote $bytesWritten bytes to $fd")
